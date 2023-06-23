@@ -58,8 +58,7 @@ class Log(object):
 
     def delete(self, idx):
         idx -= 1
-        if idx < self.base:
-            idx = self.base
+        idx = max(idx, self.base)
         idx = max(idx - self.base, 0)
         del self.entries[idx:]
 
