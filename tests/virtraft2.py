@@ -96,7 +96,7 @@ def logtype2str(log_type):
 
 def state2str(state):
     if state == lib.RAFT_STATE_LEADER:
-        return colorama.Fore.GREEN + 'leader' + colorama.Style.RESET_ALL
+        return f'{colorama.Fore.GREEN}leader{colorama.Style.RESET_ALL}'
     elif state == lib.RAFT_STATE_CANDIDATE:
         return 'candidate'
     elif state == lib.RAFT_STATE_FOLLOWER:
@@ -107,10 +107,10 @@ def state2str(state):
 
 def connectstatus2str(connectstatus):
     return {
-        NODE_DISCONNECTED: colorama.Fore.RED + 'DISCONNECTED' + colorama.Style.RESET_ALL,
+        NODE_DISCONNECTED: f'{colorama.Fore.RED}DISCONNECTED{colorama.Style.RESET_ALL}',
         NODE_CONNECTING: 'CONNECTING',
-        NODE_CONNECTED: colorama.Fore.GREEN + 'CONNECTED' + colorama.Style.RESET_ALL,
-        NODE_DISCONNECTING: colorama.Fore.YELLOW + 'DISCONNECTING' + colorama.Style.RESET_ALL,
+        NODE_CONNECTED: f'{colorama.Fore.GREEN}CONNECTED{colorama.Style.RESET_ALL}',
+        NODE_DISCONNECTING: f'{colorama.Fore.YELLOW}DISCONNECTING{colorama.Style.RESET_ALL}',
     }[connectstatus]
 
 
@@ -166,9 +166,9 @@ def raft_send_appendentries(raft, udata, node, msg):
     server.network.enqueue_msg(msg, server, dst_server)
 
     # Collect statistics
-    if server.network.max_entries_in_ae < msg.n_entries:
-        server.network.max_entries_in_ae = msg.n_entries
-
+    server.network.max_entries_in_ae = max(
+        server.network.max_entries_in_ae, msg.n_entries
+    )
     return 0
 
 
@@ -267,7 +267,7 @@ class Network(object):
     def add_server(self, server):
         self.server_id += 1
         server.id = self.server_id
-        assert server.id not in set([s.id for s in self.servers])
+        assert server.id not in {s.id for s in self.servers}
         server.set_network(self)
         self.servers.append(server)
 
@@ -292,7 +292,7 @@ class Network(object):
                 return server
             # if lib.raft_get_nodeid(server.raft) == id:
             #     return server
-        raise ServerDoesNotExist('Could not find server: {}'.format(id))
+        raise ServerDoesNotExist(f'Could not find server: {id}')
 
     def add_partition(self):
         if len(self.active_servers) <= 1:
@@ -311,7 +311,7 @@ class Network(object):
 
     def periodic(self):
         if self.random.randint(1, 100) < self.member_rate:
-            if 20 < self.random.randint(1, 100):
+            if self.random.randint(1, 100) > 20:
                 self.add_member()
             else:
                 self.remove_member()
@@ -340,9 +340,9 @@ class Network(object):
             self.diagnotistic_info()
             sys.exit(1)
 
-        # Count leadership changes
-        leader_node = lib.raft_get_current_leader_node(self.active_servers[0].raft)
-        if leader_node:
+        if leader_node := lib.raft_get_current_leader_node(
+            self.active_servers[0].raft
+        ):
             leader = ffi.from_handle(lib.raft_node_get_udata(leader_node))
             if self.leader is not leader:
                 self.leadership_changes += 1
@@ -389,9 +389,7 @@ class Network(object):
                 print(msg.sendee.debug_log())
                 print(msg.sendor.debug_log())
                 sys.exit(1)
-            elif lib.RAFT_ERR_NEEDS_SNAPSHOT == e:
-                pass  # TODO: pretend as if snapshot works
-            else:
+            elif lib.RAFT_ERR_NEEDS_SNAPSHOT != e:
                 self.enqueue_msg(response, msg.sendee, msg.sendor)
 
         elif msg_type == 'msg_appendentries_response_t *':
@@ -433,7 +431,7 @@ class Network(object):
         Check that current idx is valid, ie. it exists
         """
         ci = lib.raft_get_current_idx(server.raft)
-        if 0 < ci and not lib.raft_get_snapshot_last_idx(server.raft) == ci:
+        if ci > 0 and lib.raft_get_snapshot_last_idx(server.raft) != ci:
             ety = lib.raft_get_entry_from_idx(server.raft, ci)
             try:
                 assert ety
@@ -546,7 +544,7 @@ class Network(object):
         self.entries.append((ety, change))
 
         e = leader.recv_entry(ety)
-        if 0 != e:
+        if e != 0:
             logger.error(err2str(e))
             return
         else:
@@ -599,7 +597,7 @@ class Network(object):
         self.entries.append((ety, change))
 
         e = leader.recv_entry(ety)
-        if 0 != e:
+        if e != 0:
             logger.error(err2str(e))
             return
         else:
@@ -684,7 +682,10 @@ class RaftServer(object):
         return self.id < other.id
 
     def set_connection_status(self, new_status):
-        assert(not (self.connection_status == NODE_CONNECTED and new_status == NODE_CONNECTING))
+        assert (
+            self.connection_status != NODE_CONNECTED
+            or new_status != NODE_CONNECTING
+        )
         # logger.warning('{}: {} -> {}'.format(
         #     self,
         #     connectstatus2str(self.connection_status),
@@ -858,9 +859,6 @@ class RaftServer(object):
             if change.node_id == self.id:
                 self.set_connection_status(NODE_CONNECTED)
 
-        elif ety.type == lib.RAFT_LOGTYPE_ADD_NONVOTING_NODE:
-            pass
-
         return 0
 
     def do_membership_snapshot(self):
@@ -868,7 +866,7 @@ class RaftServer(object):
         for i in range(0, lib.raft_get_num_nodes(self.raft)):
             n = lib.raft_get_node_from_idx(self.raft, i)
             id = lib.raft_node_get_id(n)
-            if 0 == lib.raft_node_is_addition_committed(n):
+            if lib.raft_node_is_addition_committed(n) == 0:
                 id = -1
 
             self.snapshot.members.append(
@@ -881,13 +879,9 @@ class RaftServer(object):
             snapshot.last_term,
             snapshot.last_idx,
         )
-        if e == -1:
+        if e in [-1, lib.RAFT_ERR_SNAPSHOT_ALREADY_LOADED]:
             return 0
-        elif e == lib.RAFT_ERR_SNAPSHOT_ALREADY_LOADED:
-            return 0
-        elif e == 0:
-            pass
-        else:
+        elif e != 0:
             assert False
 
         # Send appendentries response for this snapshot
@@ -902,7 +896,7 @@ class RaftServer(object):
 
         # set membership configuration according to snapshot
         for member in snapshot.members:
-            if -1 == member.id:
+            if member.id == -1:
                 continue
 
             node = lib.raft_get_node(self.raft, member.id)
@@ -985,7 +979,7 @@ class RaftServer(object):
         working correctly.
         """
         ci = lib.raft_get_current_idx(self.raft)
-        if 0 < ci and not lib.raft_get_snapshot_last_idx(self.raft) == ci:
+        if ci > 0 and lib.raft_get_snapshot_last_idx(self.raft) != ci:
             try:
                 prev_ety = lib.raft_get_entry_from_idx(self.raft, ci)
                 assert prev_ety
@@ -1045,7 +1039,7 @@ class RaftServer(object):
 
         elif ety.type == lib.RAFT_LOGTYPE_ADD_NONVOTING_NODE:
             if change.node_id == lib.raft_get_nodeid(self.raft):
-                logger.error("POP disconnect {} {}".format(self, ety_idx))
+                logger.error(f"POP disconnect {self} {ety_idx}")
                 self.set_connection_status(NODE_DISCONNECTED)
 
         elif ety.type == lib.RAFT_LOGTYPE_ADD_NODE:
@@ -1112,11 +1106,7 @@ if __name__ == '__main__':
     if args['--verbose'] or args['--log_level']:
         coloredlogs.install(fmt='%(asctime)s %(levelname)s %(message)s')
 
-        if args['--log_level']:
-            level = int(args['--log_level'])
-        else:
-            level = logging.DEBUG
-
+        level = int(args['--log_level']) if args['--log_level'] else logging.DEBUG
         logger.setLevel(level)
 
         if args['--log_file']:
@@ -1133,19 +1123,19 @@ if __name__ == '__main__':
     net.member_rate = int(args['--member_rate'])
     net.compaction_rate = int(args['--compaction_rate'])
     net.partition_rate = int(args['--partition_rate'])
-    net.no_random_period = 1 == int(args['--no_random_period'])
+    net.no_random_period = int(args['--no_random_period']) == 1
 
     net.num_of_servers = int(args['--servers'])
 
     if net.member_rate == 0:
-        for i in range(0, int(args['--servers'])):
+        for _ in range(0, int(args['--servers'])):
             RaftServer(net)
         net.commit_static_configuration()
     else:
         RaftServer(net)
         net.prep_dynamic_configuration()
 
-    for i in range(0, int(args['--iterations'])):
+    for _ in range(0, int(args['--iterations'])):
         net.iteration += 1
         try:
             net.periodic()
@@ -1154,9 +1144,6 @@ if __name__ == '__main__':
             # for server in net.servers:
             #     print(server, [l.term for l in server.fsm_log])
             raise
-
-    if args['--json_output']:
-        pass
 
     if not args['--quiet']:
         net.diagnotistic_info()

@@ -22,8 +22,12 @@ lib = ffi.dlopen(library)
 
 def load(fname):
     return '\n'.join(
-        [line for line in subprocess.check_output(
-            ["gcc", "-E", fname]).decode('utf-8').split('\n')])
+        list(
+            subprocess.check_output(["gcc", "-E", fname])
+            .decode('utf-8')
+            .split('\n')
+        )
+    )
 
 
 ffi.cdef('void *malloc(size_t __size);')
